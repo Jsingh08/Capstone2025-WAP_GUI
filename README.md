@@ -13,7 +13,7 @@ This GUI application allows users to connect to STM32-based audio devices via UA
 
 
 
-## If want to mini standalone Python environment that just runs
+## If want a mini standalone Python environment that just runs
 ### MacOS `.app` Bundle
 
 #### Step 1: Install PyInstaller
@@ -29,8 +29,7 @@ pyi-makespec WAP_GUI.py
 ```
 
 #### Step 3: Modify the generated `WAP_GUI.spec`
-You can open it using TextEdit
-Replace:
+You can open it using TextEdit and then replace:
 ```python
 exe = EXE(...)
 ```
@@ -109,7 +108,7 @@ del /q *.spec
 
 ---
 
-## If want to run the .py script or running/modifying
+## If want tp run/modify the .py script
 ### Requirements
 
 To install the dependencies:
