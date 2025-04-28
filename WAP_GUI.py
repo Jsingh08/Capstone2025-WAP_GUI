@@ -3,7 +3,7 @@ import serial
 import asyncio
 import threading
 import serial.tools.list_ports
-from bleak import BleakScanner
+from bleak import BleakScanner, BleakClient
 import tkinter as tk
 from tkinter import ttk, filedialog
 from datetime import datetime
@@ -102,18 +102,19 @@ class WAPGUI(tk.Tk):
         self.volume_set_button = ttk.Button(control_frame, text="Set", command=self.set_volume)
         self.volume_set_button.grid(row=0, column=2, padx=5, pady=5)
 
-        # Row 1 - Folder/File
-        ttk.Label(control_frame, text="Folder #:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        # # Row 1 - Folder/File (closer together)
+        ttk.Label(control_frame, text="Folder #:").grid(row=1, column=0, padx=(5, 2), pady=5, sticky="e")
         self.manual_folder_entry = ttk.Entry(control_frame, width=5)
-        self.manual_folder_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.manual_folder_entry.grid(row=1, column=1, padx=(2, 10), pady=5)
 
-        ttk.Label(control_frame, text="File #:").grid(row=1, column=2, padx=5, pady=5, sticky="e")
+        ttk.Label(control_frame, text="File #:").grid(row=1, column=2, padx=(5, 2), pady=5, sticky="e")
         self.manual_file_entry = ttk.Entry(control_frame, width=5)
-        self.manual_file_entry.grid(row=1, column=3, padx=5, pady=5)
+        self.manual_file_entry.grid(row=1, column=3, padx=(2, 10), pady=5)
 
         self.track_send_button = ttk.Button(control_frame, text="Send Track", command=lambda: self.send_folder_file(
             self.manual_folder_entry.get(), self.manual_file_entry.get()))
         self.track_send_button.grid(row=1, column=4, padx=5, pady=5)
+
 
         # Row 2 - Duty Cycle
         ttk.Label(control_frame, text="Duty Cycle:").grid(row=2, column=0, padx=5, pady=5, sticky="e")
@@ -136,6 +137,8 @@ class WAPGUI(tk.Tk):
         ttk.Label(date_frame, text="Date:").pack(side=tk.LEFT, padx=5)
         self.date_entry = ttk.Entry(date_frame, width=5)
         self.date_entry.pack(side=tk.LEFT)
+        self.repeat_info_label = ttk.Label(scheduler_frame, text="(Enter Month = 0 for monthly repeating schedules)", foreground="gray")
+        self.repeat_info_label.pack(pady=2)
 
         # Row 2: Start/Stop Time
         time_frame = ttk.Frame(scheduler_frame)
@@ -168,12 +171,18 @@ class WAPGUI(tk.Tk):
         # To add enteries
         self.add_entry_button = ttk.Button(scheduler_frame, text="Add Entry", command=self.add_schedule_entry)
         self.add_entry_button.pack(pady=2)
-        # To send the schedule
-        self.send_all_button = ttk.Button(scheduler_frame, text="Send Schedules", command=self.send_all_schedules)
-        self.send_all_button.pack(pady=2)
-        #clear the queue
-        self.clear_queue_button = ttk.Button(scheduler_frame, text="Clear Queue", command=self.clear_schedule_queue)
-        self.clear_queue_button.pack(pady=2)
+        # Create a frame to hold both buttons side-by-side
+        schedule_button_frame = ttk.Frame(scheduler_frame)
+        schedule_button_frame.pack(pady=5)
+
+        # Send Schedules Button
+        self.send_all_button = ttk.Button(schedule_button_frame, text="Send Schedules", command=self.send_all_schedules)
+        self.send_all_button.pack(side=tk.LEFT, padx=10)
+
+        # Clear Queue Button
+        self.clear_queue_button = ttk.Button(schedule_button_frame, text="Clear Queue", command=self.clear_schedule_queue)
+        self.clear_queue_button.pack(side=tk.LEFT, padx=10)
+
         # **Clear and Download Log Button Frame**
         bottom_button_frame = ttk.Frame(self.frame)
         bottom_button_frame.pack(fill="x", padx=10, pady=5)
@@ -200,18 +209,18 @@ class WAPGUI(tk.Tk):
         scrollbar.pack(side=tk.RIGHT, fill="y")
         self.devices_text.config(yscrollcommand=scrollbar.set)  # Link the scrollbar to the text widget
 
-        # **Clear Button**
-        self.clear_button = ttk.Button(self.frame, text="Clear", command=self.clear_textbox)
-        self.clear_button.pack(anchor="e", padx=10)  # Position the clear button to the right
-
         # Initialize connections
         self.uart_button_toggled() # Call uart_button_toggled to adjust the state based on the initial connection type
         self.serial_conn = None
+        self.ble_device = None
+        self.ble_client = None
+        self.ble_characteristic_uuid = "YOUR-CHARACTERISTIC-UUID-HERE"  # <- Change this to device UUID
         self.device_connected = False  # Track device connection status
         self.schedule_entries = []  # To track existing scheduled intervals
-        self.schedule_queue = [] 
+        self.schedule_queue = []
         self.is_scanning = False
-        self.loop = asyncio.get_event_loop()
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
         self.scan_timeout = 2  # Scan timeout in seconds
         self.debug_mode = True  # Debug messages
         self.after(200, self.poll_uart_data)
@@ -263,36 +272,80 @@ class WAPGUI(tk.Tk):
         asyncio.run(self.scan_devices_async())
 
     async def scan_devices_async(self):
-        devices = await BleakScanner.discover(timeout=self.scan_timeout)
-        self.devices_listbox.delete(0, tk.END)
-        for device in devices:
-            self.devices_text_insert(f"[BT] Found device: {device.name}", debug=True)
-            self.devices_listbox.insert(tk.END, device.name)
-        self.devices_text_insert("[BT] Scan complete", debug=True)
-        self.is_scanning = False
+        try:
+            devices = await BleakScanner.discover(timeout=self.scan_timeout)
+            self.devices_listbox.delete(0, tk.END)
+            for device in devices:
+                self.devices_text_insert(f"[BT] Found device: {device.name}", debug=True)
+                self.devices_listbox.insert(tk.END, device.name)
+            self.devices_text_insert("[BT] Scan complete", debug=True)
+        except Exception as e:
+            self.devices_text_insert(f"[BT][ERROR] Bluetooth scan failed: {e}")
+        finally:
+            self.is_scanning = False
 
+    async def async_connect_to_bluetooth(self, device_name):
+        """Asynchronous Bluetooth connection logic."""
+        try:
+            devices = await BleakScanner.discover(timeout=self.scan_timeout)
+            for device in devices:
+                if device.name == device_name:
+                    self.ble_device = device
+                    self.ble_client = BleakClient(device)
+
+                    await self.ble_client.connect()
+                    if self.ble_client.is_connected:
+                        self.device_connected = True
+                        self.devices_text_insert(f"[BT] Connected successfully to {device_name}.", debug=True)
+                    else:
+                        self.devices_text_insert(f"[BT][ERROR] Failed to connect to {device_name}.")
+                    return
+            self.devices_text_insert(f"[BT][ERROR] Device '{device_name}' not found during scan.")
+        except Exception as e:
+            self.devices_text_insert(f"[BT][ERROR] during connection: {str(e)}", debug=True)
 
     def connect_to_bluetooth(self):
-        """Connect to Bluetooth device, only if one is selected."""
+        """Connect to Bluetooth device asynchronously."""
         if self.connection_type.get() == "Bluetooth":
+            selection = self.devices_listbox.curselection()
+            if not selection:
+                self.devices_text_insert("[BT][ERROR] No Bluetooth device selected.")
+                return
+
+            index = selection[0]
+            selected_device_name = self.devices_listbox.get(index)
+            self.devices_text_insert(f"[BT] Attempting to connect to {selected_device_name}...", debug=True)
+
+            threading.Thread(
+                target=lambda: asyncio.run(self.async_connect_to_bluetooth(selected_device_name))
+            ).start()
+
+    #Wrapper for non-async context
+    def send_over_bluetooth(self, data_bytes):
+        """Send bytes over Bluetooth in a new thread."""
+        if not self.device_connected:
+            self.devices_text_insert("[BT][ERROR] Cannot send, no device connected.")
+            return
+
+        self.devices_text_insert(f"[BT][TX] Sending data: {list(data_bytes)}", debug=True)
+
+        threading.Thread(
+            target=lambda: asyncio.run(self.bluetooth_send(data_bytes))
+        ).start()
+    
+    async def bluetooth_send(self, data_bytes):
+        """Actual asynchronous sending over BLE."""
+        if self.ble_client and self.ble_client.is_connected:
             try:
-                selection = self.devices_listbox.curselection()
-                if not selection:
-                    self.devices_text_insert("Error: No Bluetooth device selected.")
-                    return
-
-                index = selection[0]
-                selected_device = self.devices_listbox.get(index)
-                self.devices_text_insert(f"Connected to Bluetooth device: {selected_device}")
-                self.device_connected = True
-
-                # You can add Bluetooth connection logic here if needed
-                self.devices_text_insert("[BT] (Note: actual connection logic not yet implemented)", debug=True)
-
+                await self.ble_client.write_gatt_char(self.ble_characteristic_uuid, data_bytes)
+                self.devices_text_insert(f"[BT][TX] Write success.", debug=True)
             except Exception as e:
-                self.devices_text_insert(f"Error: {str(e)}")
+                self.devices_text_insert(f"[BT][ERROR] Failed to write data: {e}")
         else:
-            self.devices_text_insert("Error: Bluetooth not selected as desired connection method.")
+            self.devices_text_insert("[BT][ERROR] BLE client not connected.")
+
+
+
 
     # Add logic to ensure only one connection controls are avilble at one time
     def uart_button_toggled(self):
@@ -383,89 +436,212 @@ class WAPGUI(tk.Tk):
 
 
     def set_volume(self):
-        if self.ensure_device_connected():
-            try:
-                volume = int(self.volume_input.get())
-                if 0 <= volume <= 100:
-                    self.devices_text_insert(f"Volume set to: {volume}%")
-                    if self.connection_type.get() == "UART" and self.serial_conn:
-                        self.devices_text_insert(f"[UART] Sending volume command: 0x00 {volume}", debug=True)
-                        self.serial_conn.write(bytes([0x00, volume]))
+        """Set the system volume (0-100%) and send command over UART or Bluetooth."""
+        if not self.ensure_device_connected():
+            return  # No device connected, skip
+
+        try:
+            volume = int(self.volume_input.get())
+
+            # Validate volume range
+            if 0 <= volume <= 100:
+                self.devices_text_insert(f"Volume set to: {volume}%")
+
+                if self.connection_type.get() == "UART" and self.serial_conn:
+                    # UART Transmission
+                    self.devices_text_insert(f"[UART][TX] Sending volume command: 0x00 {volume}", debug=True)
+                    self.serial_conn.write(bytes([0x00, volume]))
+
+                elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+                    # Bluetooth Transmission
+                    self.devices_text_insert(f"[BT][TX] Sending volume command: 0x00 {volume}", debug=True)
+                    self.send_over_bluetooth(bytes([0x00, volume]))
+
                 else:
-                    self.devices_text_insert("Error: Volume must be between 0 and 100.")
-            except ValueError:
-                self.devices_text_insert("Error: Please enter a valid number.")
+                    self.devices_text_insert("Error: No valid connection.")
+
+            else:
+                # Volume out of valid 0–100 range
+                self.devices_text_insert("Error: Volume must be between 0 and 100.")
+
+        except ValueError:
+            # Non-integer input
+            self.devices_text_insert("Error: Please enter a valid number for volume.")
+
 
     def send_folder_file(self, folder, file):
-        if self.ensure_device_connected():
-            try:
-                folder = int(folder)
-                file = int(file)
-                if 0 <= folder <= 255 and 0 <= file <= 255:
-                    self.devices_text_insert(f"Sending folder #{folder}, file #{file}")
-                    if self.connection_type.get() == "UART" and self.serial_conn:
-                        self.devices_text_insert(f"[UART] Sending folder/file command: 0x01 {folder} {file}", debug=True)
-                        self.serial_conn.write(bytes([0x01, folder, file]))
+        """Send a specific folder and file selection command to the device over UART or Bluetooth."""
+        if not self.ensure_device_connected():
+            return  # No device connected, skip
+
+        try:
+            folder = int(folder)
+            file = int(file)
+
+            # Validate folder and file numbers
+            if 0 <= folder <= 255 and 0 <= file <= 255:
+                self.devices_text_insert(f"Sending Folder #{folder}, File #{file}")
+
+                if self.connection_type.get() == "UART" and self.serial_conn:
+                    # UART Transmission
+                    self.devices_text_insert(f"[UART][TX] Sending folder/file command: 0x01 {folder} {file}", debug=True)
+                    self.serial_conn.write(bytes([0x01, folder, file]))
+
+                elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+                    # Bluetooth Transmission
+                    self.devices_text_insert(f"[BT][TX] Sending folder/file command: 0x01 {folder} {file}", debug=True)
+                    self.send_over_bluetooth(bytes([0x01, folder, file]))
+
                 else:
-                    self.devices_text_insert("Error: Folder/File must be 0–255.")
-            except ValueError:
-                self.devices_text_insert("Error: Invalid folder or file number.")
+                    self.devices_text_insert("Error: No valid connection.")
+
+            else:
+                # Folder or file out of valid 0–255 range
+                self.devices_text_insert("Error: Folder and File must be between 0 and 255.")
+
+        except ValueError:
+            # Non-integer inputs
+            self.devices_text_insert("Error: Invalid folder or file number. Please enter valid integers.")
+
 
 
     def set_duty_cycle(self):
-        if self.ensure_device_connected():
-            try:
-                duty_cycle = int(self.duty_cycle_input.get())
-                if 0 <= duty_cycle <= 100:
-                    self.devices_text_insert(f"Duty cycle set to: {duty_cycle}%")
-                    if self.connection_type.get() == "UART" and self.serial_conn:
-                        self.devices_text_insert(f"[UART] Sending duty cycle command: 0x04 {duty_cycle}", debug=True)
-                        self.serial_conn.write(bytes([0x04, duty_cycle]))
+        """Set the system duty cycle (0-100%) and send command over UART or Bluetooth."""
+        if not self.ensure_device_connected():
+            return  # No device connected, skip further actions
+
+        try:
+            duty_cycle = int(self.duty_cycle_input.get())
+
+            # Check if duty cycle is in valid range
+            if 0 <= duty_cycle <= 100:
+                self.devices_text_insert(f"Duty cycle set to: {duty_cycle}%")
+
+                if self.connection_type.get() == "UART" and self.serial_conn:
+                    # UART Transmission
+                    self.devices_text_insert(f"[UART][TX] Sending duty cycle command: 0x04 {duty_cycle}", debug=True)
+                    self.serial_conn.write(bytes([0x04, duty_cycle]))
+
+                elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+                    # Bluetooth Transmission
+                    self.devices_text_insert(f"[BT][TX] Sending duty cycle command: 0x04 {duty_cycle}", debug=True)
+                    self.send_over_bluetooth(bytes([0x04, duty_cycle]))
+
                 else:
-                    self.devices_text_insert("Error: Duty cycle must be between 0 and 100.")
-            except ValueError:
-                self.devices_text_insert("Error: Please enter a valid number.")
+                    self.devices_text_insert("Error: No valid connection.")
+
+            else:
+                # Duty cycle value out of range
+                self.devices_text_insert("Error: Duty cycle must be between 0 and 100.")
+
+        except ValueError:
+            # Non-integer input
+            self.devices_text_insert("Error: Please enter a valid number for duty cycle.")
+
 
     def download_log(self):
-        if self.ensure_device_connected():
-            self.devices_text_insert("Requesting log download...")
-            if self.connection_type.get() == "UART" and self.serial_conn:
-                try:
-                    self.devices_text_insert("[UART] Sending log request command: 0x02", debug=True)
-                    self.serial_conn.write(bytes([0x02]))
-                    high = self.serial_conn.read(1)
-                    low = self.serial_conn.read(1)
-                    if not high or not low:
-                        self.devices_text_insert("Error: Failed to receive log size.")
-                        return
-                    size = (high[0] << 8) | low[0]
-                    self.devices_text_insert(f"[UART] Log size received: {size} bytes", debug=True)
-                    received_data = b""
-                    while len(received_data) < size:
-                        chunk = self.serial_conn.read(size - len(received_data))
-                        if not chunk:
-                            break
-                        received_data += chunk
-                        self.devices_text_insert(f"[UART] Received {len(received_data)} / {size} bytes...", debug=True)
-                    log_text = received_data.decode(errors="replace")
-                    preview = log_text[:300] + ("..." if len(log_text) > 300 else "")
-                    self.devices_text_insert("Log Preview:\n" + preview)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    default_filename = f"log_{timestamp}.txt"
-                    file_path = filedialog.asksaveasfilename(
-                        title="Save Log As",
-                        defaultextension=".txt",
-                        filetypes=[("Text Files", "*.txt")],
-                        initialfile=default_filename
-                    )
-                    if file_path:
-                        with open(file_path, "w", encoding="utf-8") as f:
-                            f.write(log_text)
-                        self.devices_text_insert(f"Log saved to {file_path}")
+        """Request and download system log from the device (UART or Bluetooth)."""
+        if not self.ensure_device_connected():
+            self.devices_text_insert("Error: No device connected.")
+            return
+
+        self.devices_text_insert("Requesting log download...")
+
+        if self.connection_type.get() == "UART" and self.serial_conn:
+            try:
+                # UART Download Logic
+                self.devices_text_insert("[UART][TX] Sending log request command: 0x02", debug=True)
+                self.serial_conn.write(bytes([0x02]))
+
+                high = self.serial_conn.read(1)
+                low = self.serial_conn.read(1)
+
+                if not high or not low:
+                    self.devices_text_insert("[UART][ERROR] Failed to receive log size.")
+                    return
+
+                size = (high[0] << 8) | low[0]
+                self.devices_text_insert(f"[UART][RX] Log size received: {size} bytes", debug=True)
+
+                received_data = b""
+                while len(received_data) < size:
+                    chunk = self.serial_conn.read(size - len(received_data))
+                    if not chunk:
+                        break
+                    received_data += chunk
+                    self.devices_text_insert(f"[UART][RX] Received {len(received_data)} / {size} bytes...", debug=True)
+
+                log_text = received_data.decode(errors="replace")
+                self.preview_and_save_log(log_text)
+
+            except Exception as e:
+                self.devices_text_insert(f"[UART][ERROR] during log download: {e}", debug=True)
+
+        elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+            try:
+                # Bluetooth Download Logic
+                self.devices_text_insert("[BT][TX] Sending log request command: 0x02", debug=True)
+                self.send_over_bluetooth(bytes([0x02]))
+
+                # Wait for device to send size (2 bytes) over BLE
+                async def ble_download():
+                    if self.ble_client and self.ble_client.is_connected:
+                        high = await self.ble_client.read_gatt_char(self.ble_characteristic_uuid)
+                        low = await self.ble_client.read_gatt_char(self.ble_characteristic_uuid)
+
+                        if not high or not low:
+                            self.devices_text_insert("[BT][ERROR] Failed to receive log size.")
+                            return
+
+                        size = (high[0] << 8) | low[0]
+                        self.devices_text_insert(f"[BT][RX] Log size received: {size} bytes", debug=True)
+
+                        received_data = b""
+                        while len(received_data) < size:
+                            chunk = await self.ble_client.read_gatt_char(self.ble_characteristic_uuid)
+                            if not chunk:
+                                break
+                            received_data += chunk
+                            self.devices_text_insert(f"[BT][RX] Received {len(received_data)} / {size} bytes...", debug=True)
+
+                        log_text = received_data.decode(errors="replace")
+                        self.preview_and_save_log(log_text)
                     else:
-                        self.devices_text_insert("Save canceled by user.")
-                except Exception as e:
-                    self.devices_text_insert(f"[UART][ERROR] during log download: {e}", debug=True)
+                        self.devices_text_insert("[BT][ERROR] No BLE connection active.")
+
+                threading.Thread(target=lambda: asyncio.run(ble_download())).start()
+
+            except Exception as e:
+                self.devices_text_insert(f"[BT][ERROR] during log download: {e}", debug=True)
+
+        else:
+            self.devices_text_insert("Error: Log download only supported over UART or Bluetooth.")
+
+
+
+    #Helper function for preview and save log
+    def preview_and_save_log(self, log_text):
+        """Helper to preview and save downloaded log."""
+        preview = log_text[:300] + ("..." if len(log_text) > 300 else "")
+        self.devices_text_insert("Log Preview:\n" + preview)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"log_{timestamp}.txt"
+
+        file_path = filedialog.asksaveasfilename(
+            title="Save Log As",
+            defaultextension=".txt",
+            filetypes=[("Text Files", "*.txt")],
+            initialfile=default_filename
+        )
+
+        if file_path:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(log_text)
+            self.devices_text_insert(f"Log saved to {file_path}")
+        else:
+            self.devices_text_insert("Save canceled by user.")
+
 
     def add_schedule_entry(self):
         """Validate and add a schedule entry to the queue (but don't send it)."""
@@ -519,7 +695,7 @@ class WAPGUI(tk.Tk):
 
 
     def send_all_schedules(self):
-        """Send all queued schedules to the device."""
+        """Send all queued schedules to the device (UART or Bluetooth)."""
         if not self.ensure_device_connected():
             self.devices_text_insert("Error: No device connected.")
             return
@@ -528,27 +704,66 @@ class WAPGUI(tk.Tk):
             self.devices_text_insert("Error: No schedules queued.")
             return
 
-        if self.connection_type.get() == "UART" and self.serial_conn:
-            try:
-                self.serial_conn.write(bytes([0x05]))  # Start batch
+        try:
+            # Command bytes
+            start_batch = bytes([0x05])  # Start schedule transmission
+            end_batch = bytes([0x0D])    # End schedule transmission
+
+            # Function to encode time (hour and minute) into a single byte
+            def encode_time(h, m):
+                return ((h & 0b11111) << 3) | (m // 15)  # 5 bits for hour, 3 bits for 15-min intervals
+
+            if self.connection_type.get() == "UART" and self.serial_conn:
+                # UART sending
+                self.devices_text_insert("[UART][TX] Sending start batch command (0x05)", debug=True)
+                self.serial_conn.write(start_batch)
+
                 for sched in self.schedule_queue:
-                    def encode_time(h, m): return ((h & 0b11111) << 3) | (m // 15)
-                    self.serial_conn.write(bytes([
+                    encoded_schedule = bytes([
                         sched["month"], sched["date"],
                         encode_time(sched["start_hour"], sched["start_min"]),
                         encode_time(sched["stop_hour"], sched["stop_min"]),
                         sched["folder"], sched["file"]
-                    ]))
-                self.serial_conn.write(bytes([0x0D]))  # End batch
+                    ])
+                    self.serial_conn.write(encoded_schedule)
+                    self.devices_text_insert(f"[UART][TX] Sent schedule: {encoded_schedule}", debug=True)
+
+                self.serial_conn.write(end_batch)
+                self.devices_text_insert("[UART][TX] Sending end batch command (0x0D)", debug=True)
                 self.devices_text_insert(f"[UART] Sent {len(self.schedule_queue)} schedule(s) to device.")
                 self.schedule_queue.clear()
-            except Exception as e:
-                self.devices_text_insert(f"Error sending schedules: {e}")
-        else:
-            self.devices_text_insert("Bluetooth scheduling not implemented.")
+
+            elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+                # Bluetooth sending
+                self.devices_text_insert("[BT][TX] Sending start batch command (0x05)", debug=True)
+                self.send_over_bluetooth(start_batch)
+
+                for sched in self.schedule_queue:
+                    encoded_schedule = bytes([
+                        sched["month"], sched["date"],
+                        encode_time(sched["start_hour"], sched["start_min"]),
+                        encode_time(sched["stop_hour"], sched["stop_min"]),
+                        sched["folder"], sched["file"]
+                    ])
+                    self.send_over_bluetooth(encoded_schedule)
+                    self.devices_text_insert(f"[BT][TX] Sent schedule: {encoded_schedule}", debug=True)
+
+                self.send_over_bluetooth(end_batch)
+                self.devices_text_insert("[BT][TX] Sending end batch command (0x0D)", debug=True)
+                self.devices_text_insert(f"[BT] Sent {len(self.schedule_queue)} schedule(s) to device.")
+                self.schedule_queue.clear()
+
+            else:
+                self.devices_text_insert("Error: No valid connection type selected.")
+
+        except Exception as e:
+            self.devices_text_insert(f"Error sending schedules: {e}")
+        
     def clear_schedule_queue(self):
+        """Clear all queued schedules."""
         self.schedule_queue.clear()
         self.devices_text_insert("Schedule queue cleared.")
+
 
 
 #main loop
