@@ -96,7 +96,7 @@ pyinstaller --onefile --noconsole --icon=wildlife.ico WAP_GUI.py
 The output `.exe` file will be found in the `dist/` directory.
 
 ---
-#### Step 5: Clean up build artifacts
+#### Step 3: Clean up build artifacts
 
 After building, clean the unnecessary folders:
 
@@ -108,7 +108,7 @@ del /q *.spec
 
 ---
 
-## If want tp run/modify the .py script
+## If want to run/modify the .py script
 ### Requirements
 
 To install the dependencies:
